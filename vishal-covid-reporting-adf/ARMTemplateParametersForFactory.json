@@ -1,0 +1,24 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"value": "vishal-covid-reporting-adf"
+		},
+		"ls_ablob_covidreporting_sa_connectionString": {
+			"value": ""
+		},
+		"ls_adls_covidreporting_dl_accountKey": {
+			"value": ""
+		},
+		"ls_adls_covidreporting_dl_properties_typeProperties_url": {
+			"value": "https://vishalcoviddl.dfs.core.windows.net/"
+		},
+		"ls_http_opendata_ecdc_europe_eu_properties_typeProperties_url": {
+			"value": "https://github.com"
+		},
+		"tr_ingest_population_data_properties_typeProperties_scope": {
+			"value": "/subscriptions/b0cac2b5-ec9e-4825-882f-17d985ac0d63/resourceGroups/covid-reporting-rg/providers/Microsoft.Storage/storageAccounts/vishalcovidsa"
+		}
+	}
+}
