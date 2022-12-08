@@ -1,0 +1,9 @@
+{
+	"name": "vishal-covid-reporting-adf",
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "11ac737d-1abe-4b3a-9888-cf7cd6cb5fe2",
+		"tenantId": "b6417cd0-1f73-4471-9a39-20953822a34a"
+	}
+}
