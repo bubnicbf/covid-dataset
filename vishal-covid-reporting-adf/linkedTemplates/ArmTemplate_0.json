@@ -525,8 +525,9 @@
 					"recurrence": {
 						"frequency": "Day",
 						"interval": 1,
-						"startTime": "2022-12-08T15:22:50",
-						"timeZone": "Pacific Standard Time"
+						"startTime": "2022-12-08T15:26:50",
+						"timeZone": "Pacific Standard Time",
+						"schedule": {}
 					}
 				}
 			},
