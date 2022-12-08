@@ -15,7 +15,7 @@
 			"value": "https://vishalcoviddl.dfs.core.windows.net/"
 		},
 		"ls_http_opendata_ecdc_europe_eu_properties_typeProperties_url": {
-			"value": "https://raw.githubusercontent.com"
+			"value": "@{linkedService().sourceBaseURL}"
 		},
 		"tr_ingest_hospital_admission_data_properties_pl_ingest_ecdc_data_parameters_sourceRelativeURL": {
 			"value": "cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv"
