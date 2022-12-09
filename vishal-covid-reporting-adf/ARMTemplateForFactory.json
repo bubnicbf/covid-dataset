@@ -375,7 +375,7 @@
 			"properties": {
 				"activities": [
 					{
-						"name": "Data flow1",
+						"name": "df_tranformed_cases_and_deaths",
 						"type": "ExecuteDataFlow",
 						"dependsOn": [],
 						"policy": {
