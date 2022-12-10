@@ -417,6 +417,56 @@
 			]
 		},
 		{
+			"name": "[concat(parameters('factoryName'), '/pl_processed_hospital_admissions')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"activities": [
+					{
+						"name": "Processed_hospital_admissions_data",
+						"type": "ExecuteDataFlow",
+						"dependsOn": [],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"dataflow": {
+								"referenceName": "df_transform_hospital_admissions",
+								"type": "DataFlowReference",
+								"parameters": {},
+								"datasetParameters": {
+									"HospitalAdmissionsSource": {},
+									"CountrySource": {},
+									"DimDateSource": {},
+									"sinkWeeklyHospitalAdmissionsData": {},
+									"sinkDaily": {}
+								}
+							},
+							"staging": {},
+							"compute": {
+								"coreCount": 8,
+								"computeType": "General"
+							},
+							"traceLevel": "Fine"
+						}
+					}
+				],
+				"policy": {
+					"elapsedTimeMetric": {},
+					"cancelAfter": {}
+				},
+				"annotations": []
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/dataflows/df_transform_hospital_admissions')]"
+			]
+		},
+		{
 			"name": "[concat(parameters('factoryName'), '/ds_country_lookup')]",
 			"type": "Microsoft.DataFactory/factories/datasets",
 			"apiVersion": "2018-06-01",
@@ -1348,9 +1398,11 @@
 						"     columnNaming: '$N_$V',",
 						"     lateral: true) ~> pivotDaily",
 						"pivotWeekly sort(desc(reported_year_week, true),",
-						"     asc(country, true)) ~> sortWeekly",
+						"     asc(country, true),",
+						"     partitionBy('hash', 1)) ~> sortWeekly",
 						"pivotDaily sort(desc(reported_date, true),",
-						"     asc(country, true)) ~> sortDaily",
+						"     asc(country, true),",
+						"     partitionBy('hash', 1)) ~> sortDaily",
 						"sortWeekly select(mapColumn(",
 						"          country,",
 						"          country_code_2_digit,",
@@ -1379,18 +1431,24 @@
 						"     skipDuplicateMapOutputs: true) ~> selectDaily",
 						"selectWeekly sink(allowSchemaDrift: true,",
 						"     validateSchema: false,",
+						"     partitionFileNames:['hospital_admissions_weekly'],",
+						"     truncate: true,",
 						"     umask: 0022,",
 						"     preCommands: [],",
 						"     postCommands: [],",
 						"     skipDuplicateMapInputs: true,",
-						"     skipDuplicateMapOutputs: true) ~> sinkWeeklyHospitalAdmissionsData",
+						"     skipDuplicateMapOutputs: true,",
+						"     partitionBy('hash', 1)) ~> sinkWeeklyHospitalAdmissionsData",
 						"selectDaily sink(allowSchemaDrift: true,",
 						"     validateSchema: false,",
+						"     partitionFileNames:['hospital_admissions_daily'],",
+						"     truncate: true,",
 						"     umask: 0022,",
 						"     preCommands: [],",
 						"     postCommands: [],",
 						"     skipDuplicateMapInputs: true,",
-						"     skipDuplicateMapOutputs: true) ~> sinkDaily"
+						"     skipDuplicateMapOutputs: true,",
+						"     partitionBy('hash', 1)) ~> sinkDaily"
 					]
 				}
 			},
@@ -1401,19 +1459,6 @@
 				"[concat(variables('factoryId'), '/datasets/ds_processed_weekly_hospital_admissions_weekly')]",
 				"[concat(variables('factoryId'), '/datasets/ds_processed_hospital_admissions_daily')]"
 			]
-		},
-		{
-			"name": "[concat(parameters('factoryName'), '/pipeline1')]",
-			"type": "Microsoft.DataFactory/factories/pipelines",
-			"apiVersion": "2018-06-01",
-			"properties": {
-				"policy": {
-					"elapsedTimeMetric": {},
-					"cancelAfter": {}
-				},
-				"annotations": []
-			},
-			"dependsOn": []
 		}
 	]
 }
