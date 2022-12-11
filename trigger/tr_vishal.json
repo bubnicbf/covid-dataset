@@ -1,0 +1,17 @@
+{
+	"name": "tr_vishal",
+	"properties": {
+		"annotations": [],
+		"runtimeState": "Stopped",
+		"pipelines": [],
+		"type": "ScheduleTrigger",
+		"typeProperties": {
+			"recurrence": {
+				"frequency": "Day",
+				"interval": 1,
+				"startTime": "2022-12-11T00:20:00Z",
+				"timeZone": "UTC"
+			}
+		}
+	}
+}
