@@ -1,0 +1,27 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"value": "covid-reporting-vishal-adf"
+		},
+		"ls_ablob_covidreporting_sa_connectionString": {
+			"value": ""
+		},
+		"ls_adls_covidreporting_dl_accountKey": {
+			"value": ""
+		},
+		"ls_adls_covidreporting_dl_properties_typeProperties_url": {
+			"value": "https://covidvishaldl.dfs.core.windows.net/"
+		},
+		"ls_http_opendata_ecdc_europe_eu_properties_typeProperties_url": {
+			"value": "@{linkedService().sourceBaseURL}"
+		},
+		"containerUri": {
+			"value": ""
+		},
+		"containerSasToken": {
+			"value": ""
+		}
+	}
+}
