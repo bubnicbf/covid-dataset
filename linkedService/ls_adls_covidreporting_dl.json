@@ -5,8 +5,8 @@
 		"annotations": [],
 		"type": "AzureBlobFS",
 		"typeProperties": {
-			"url": "https://covidvishaldl.dfs.core.windows.net/",
-			"encryptedCredential": "ew0KICAiVmVyc2lvbiI6ICIyMDE3LTExLTMwIiwNCiAgIlByb3RlY3Rpb25Nb2RlIjogIktleSIsDQogICJTZWNyZXRDb250ZW50VHlwZSI6ICJQbGFpbnRleHQiLA0KICAiQ3JlZGVudGlhbElkIjogIkRBVEFGQUNUT1JZQDMxMDZFMDUzLTdCN0ItNDc0Mi04QjMwLTZGQTcyNUEwOTgyNl81MjIyZmY0YS02ZTNmLTQ4MGYtOGFhNC00ZGFkYmMwNzllNDIiDQp9"
+			"url": "https://vishalcoviddl.dfs.core.windows.net/",
+			"encryptedCredential": "ew0KICAiVmVyc2lvbiI6ICIyMDE3LTExLTMwIiwNCiAgIlByb3RlY3Rpb25Nb2RlIjogIktleSIsDQogICJTZWNyZXRDb250ZW50VHlwZSI6ICJQbGFpbnRleHQiLA0KICAiQ3JlZGVudGlhbElkIjogIkRBVEFGQUNUT1JZQDU2MjQyQkRGLTA4MUEtNDNBNi1CRkU2LTI1QjIxQjhDNzc3RF9mM2VmMTBjYS01NWZhLTQ5NzMtYjg1Yi01NmFkMTA4NjNkNDciDQp9"
 		}
 	}
 }
