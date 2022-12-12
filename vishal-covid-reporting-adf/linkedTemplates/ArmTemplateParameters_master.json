@@ -11,6 +11,9 @@
 		"ls_adls_covidreporting_dl_accountKey": {
 			"value": ""
 		},
+		"ls_sql_covid_db_connectionString": {
+			"value": ""
+		},
 		"ls_adls_covidreporting_dl_properties_typeProperties_url": {
 			"value": "https://vishalcoviddl.dfs.core.windows.net/"
 		},
