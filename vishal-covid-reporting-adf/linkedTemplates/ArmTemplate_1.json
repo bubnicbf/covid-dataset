@@ -17,69 +17,6 @@
 	},
 	"resources": [
 		{
-			"name": "[concat(parameters('factoryName'), '/ds_sql_testing')]",
-			"type": "Microsoft.DataFactory/factories/datasets",
-			"apiVersion": "2018-06-01",
-			"properties": {
-				"linkedServiceName": {
-					"referenceName": "ls_sql_covid_db",
-					"type": "LinkedServiceReference"
-				},
-				"annotations": [],
-				"type": "AzureSqlTable",
-				"schema": [
-					{
-						"name": "country",
-						"type": "varchar"
-					},
-					{
-						"name": "country_code_2_digit",
-						"type": "varchar"
-					},
-					{
-						"name": "country_code_3_digit",
-						"type": "varchar"
-					},
-					{
-						"name": "year_week",
-						"type": "varchar"
-					},
-					{
-						"name": "week_start_date",
-						"type": "date"
-					},
-					{
-						"name": "week_end_date",
-						"type": "date"
-					},
-					{
-						"name": "new_cases",
-						"type": "bigint",
-						"precision": 19
-					},
-					{
-						"name": "tests_done",
-						"type": "bigint",
-						"precision": 19
-					},
-					{
-						"name": "population",
-						"type": "bigint",
-						"precision": 19
-					},
-					{
-						"name": "testing_data_source",
-						"type": "varchar"
-					}
-				],
-				"typeProperties": {
-					"schema": "covid_reporting",
-					"table": "testing"
-				}
-			},
-			"dependsOn": []
-		},
-		{
 			"name": "[concat(parameters('factoryName'), '/pl_ingest_ecdc_data')]",
 			"type": "Microsoft.DataFactory/factories/pipelines",
 			"apiVersion": "2018-06-01",
@@ -216,6 +153,9 @@
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"folder": {
+					"name": "ingest"
 				},
 				"annotations": [],
 				"lastPublishTime": "2022-12-08T18:26:45Z"
@@ -403,6 +343,9 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "ingest"
+				},
 				"annotations": [],
 				"lastPublishTime": "2022-12-08T01:26:24Z"
 			},
@@ -475,6 +418,9 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "sqlize"
+				},
 				"annotations": []
 			},
 			"dependsOn": []
@@ -546,6 +492,9 @@
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"folder": {
+					"name": "sqlize"
 				},
 				"annotations": []
 			},
@@ -731,11 +680,12 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "sqlize"
+				},
 				"annotations": []
 			},
-			"dependsOn": [
-				"[concat(variables('factoryId'), '/datasets/ds_sql_testing')]"
-			]
+			"dependsOn": []
 		},
 		{
 			"name": "[concat(parameters('factoryName'), '/df_transform_cases_deaths')]",
@@ -1147,6 +1097,9 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "process"
+				},
 				"annotations": []
 			},
 			"dependsOn": [
@@ -1196,6 +1149,9 @@
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"folder": {
+					"name": "process"
 				},
 				"annotations": []
 			},

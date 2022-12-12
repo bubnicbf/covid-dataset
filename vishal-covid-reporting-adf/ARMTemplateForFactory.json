@@ -174,6 +174,9 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "ingest"
+				},
 				"annotations": [],
 				"lastPublishTime": "2022-12-08T18:26:45Z"
 			},
@@ -364,6 +367,9 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "ingest"
+				},
 				"annotations": [],
 				"lastPublishTime": "2022-12-08T01:26:24Z"
 			},
@@ -414,6 +420,9 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "process"
+				},
 				"annotations": []
 			},
 			"dependsOn": [
@@ -463,6 +472,9 @@
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"folder": {
+					"name": "process"
 				},
 				"annotations": []
 			},
@@ -536,6 +548,9 @@
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"folder": {
+					"name": "sqlize"
 				},
 				"annotations": []
 			},
@@ -611,6 +626,9 @@
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"folder": {
+					"name": "sqlize"
 				},
 				"annotations": []
 			},
@@ -799,68 +817,14 @@
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
 				},
+				"folder": {
+					"name": "sqlize"
+				},
 				"annotations": []
 			},
 			"dependsOn": [
 				"[concat(variables('factoryId'), '/datasets/ds_processed_testing')]",
 				"[concat(variables('factoryId'), '/datasets/ds_sql_testing')]"
-			]
-		},
-		{
-			"name": "[concat(parameters('factoryName'), '/AzureSqlTable1')]",
-			"type": "Microsoft.DataFactory/factories/datasets",
-			"apiVersion": "2018-06-01",
-			"properties": {
-				"linkedServiceName": {
-					"referenceName": "ls_sql_covid_db",
-					"type": "LinkedServiceReference"
-				},
-				"annotations": [],
-				"type": "AzureSqlTable",
-				"schema": [
-					{
-						"name": "country",
-						"type": "varchar"
-					},
-					{
-						"name": "country_code_2_digit",
-						"type": "varchar"
-					},
-					{
-						"name": "country_code_3_digit",
-						"type": "varchar"
-					},
-					{
-						"name": "population",
-						"type": "bigint",
-						"precision": 19
-					},
-					{
-						"name": "reported_date",
-						"type": "date"
-					},
-					{
-						"name": "hospital_occupancy_count",
-						"type": "bigint",
-						"precision": 19
-					},
-					{
-						"name": "icu_occupancy_count",
-						"type": "bigint",
-						"precision": 19
-					},
-					{
-						"name": "source",
-						"type": "varchar"
-					}
-				],
-				"typeProperties": {
-					"schema": "covid_reporting",
-					"table": "hospital_admissions_daily"
-				}
-			},
-			"dependsOn": [
-				"[concat(variables('factoryId'), '/linkedServices/ls_sql_covid_db')]"
 			]
 		},
 		{
@@ -871,6 +835,9 @@
 				"linkedServiceName": {
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
+				},
+				"folder": {
+					"name": "lookup"
 				},
 				"annotations": [],
 				"type": "DelimitedText",
@@ -921,6 +888,9 @@
 				"linkedServiceName": {
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
+				},
+				"folder": {
+					"name": "lookup"
 				},
 				"annotations": [],
 				"type": "DelimitedText",
@@ -1000,6 +970,9 @@
 					"referenceName": "ls_ablob_covidreporting_sa",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "lookup"
+				},
 				"annotations": [],
 				"type": "Json",
 				"typeProperties": {
@@ -1038,6 +1011,9 @@
 					"fileName": {
 						"type": "string"
 					}
+				},
+				"folder": {
+					"name": "raw"
 				},
 				"annotations": [],
 				"type": "DelimitedText",
@@ -1085,6 +1061,9 @@
 						"type": "string"
 					}
 				},
+				"folder": {
+					"name": "raw"
+				},
 				"annotations": [],
 				"type": "DelimitedText",
 				"typeProperties": {
@@ -1114,6 +1093,9 @@
 				"linkedServiceName": {
 					"referenceName": "ls_ablob_covidreporting_sa",
 					"type": "LinkedServiceReference"
+				},
+				"folder": {
+					"name": "raw"
 				},
 				"annotations": [],
 				"type": "DelimitedText",
@@ -1145,6 +1127,9 @@
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "raw"
+				},
 				"annotations": [],
 				"type": "DelimitedText",
 				"typeProperties": {
@@ -1174,6 +1159,9 @@
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "processed"
+				},
 				"annotations": [],
 				"type": "DelimitedText",
 				"typeProperties": {
@@ -1202,6 +1190,9 @@
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "processed"
+				},
 				"annotations": [],
 				"type": "DelimitedText",
 				"typeProperties": {
@@ -1229,6 +1220,9 @@
 				"linkedServiceName": {
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
+				},
+				"folder": {
+					"name": "processed"
 				},
 				"annotations": [],
 				"type": "DelimitedText",
@@ -1294,6 +1288,9 @@
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "processed"
+				},
 				"annotations": [],
 				"type": "DelimitedText",
 				"typeProperties": {
@@ -1321,6 +1318,9 @@
 				"linkedServiceName": {
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
+				},
+				"folder": {
+					"name": "raw"
 				},
 				"annotations": [],
 				"type": "DelimitedText",
@@ -1388,6 +1388,9 @@
 					"referenceName": "ls_adls_covidreporting_dl",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "raw"
+				},
 				"annotations": [],
 				"type": "DelimitedText",
 				"typeProperties": {
@@ -1446,6 +1449,9 @@
 					"referenceName": "ls_sql_covid_db",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "sql"
+				},
 				"annotations": [],
 				"type": "AzureSqlTable",
 				"schema": [
@@ -1503,6 +1509,9 @@
 					"referenceName": "ls_sql_covid_db",
 					"type": "LinkedServiceReference"
 				},
+				"folder": {
+					"name": "sql"
+				},
 				"annotations": [],
 				"type": "AzureSqlTable",
 				"schema": [
@@ -1559,6 +1568,9 @@
 				"linkedServiceName": {
 					"referenceName": "ls_sql_covid_db",
 					"type": "LinkedServiceReference"
+				},
+				"folder": {
+					"name": "sql"
 				},
 				"annotations": [],
 				"type": "AzureSqlTable",
