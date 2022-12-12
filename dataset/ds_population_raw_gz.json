@@ -5,6 +5,9 @@
 			"referenceName": "ls_ablob_covidreporting_sa",
 			"type": "LinkedServiceReference"
 		},
+		"folder": {
+			"name": "raw"
+		},
 		"annotations": [],
 		"type": "DelimitedText",
 		"typeProperties": {
