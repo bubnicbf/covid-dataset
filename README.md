@@ -2,7 +2,7 @@
 
 An Azure Data Factory (ADF) project that ingests public COVID-19 and population data, transforms it in Azure Data Lake Storage Gen2, and loads curated datasets into Azure SQL Database.
 
-The repository contains the source-controlled ADF resources and generated ARM templates needed to deploy the factory. It does not include source data, database DDL, or cloud credentials. Azure services are accessed with the Data Factory managed identity, so no secrets are required in source control.
+The repository contains the source-controlled ADF resources and generated ARM templates needed to deploy the factory. It also contains the Azure SQL DDL, stored procedures, and tests for the database side. It does not include source data or cloud credentials. Azure services are accessed with the Data Factory managed identity, so no secrets are required in source control.
 
 ## Architecture
 
@@ -46,28 +46,32 @@ flowchart LR
 
 ### SQL loading
 
-| Pipeline | Destination table |
-| --- | --- |
-| `pl_sqlize_cases_and_deaths` | `covid_reporting.cases_and_deaths` |
-| `pl_sqlize_hospital_admissions_daily_data` | `covid_reporting.hospital_admissions_daily` |
-| `pl_sqlize_testing` | `covid_reporting.testing` |
+| Pipeline | Staging table | Published table | Business key |
+| --- | --- | --- | --- |
+| `pl_sqlize_cases_and_deaths` | `covid_staging.cases_and_deaths` | `covid_reporting.cases_and_deaths` | `country`, `reported_date`, `source` |
+| `pl_sqlize_hospital_admissions_daily_data` | `covid_staging.hospital_admissions_daily` | `covid_reporting.hospital_admissions_daily` | `country`, `reported_date`, `source` |
+| `pl_sqlize_testing` | `covid_staging.testing` | `covid_reporting.testing` | `country`, `year_week`, `testing_data_source` |
 
-The hospital-admissions and testing loaders truncate their destination tables before inserting refreshed data. The cases-and-deaths loader currently inserts without a configured pre-copy truncate operation.
+Every SQL load is **idempotent and failure-safe**. Running the same processed snapshot again leaves the database in the same state. A failed run leaves the previous published snapshot untouched. See [Idempotent SQL loads](#idempotent-sql-loads).
 
 ## Repository layout
 
 ```text
 .
-├── .github/workflows/           # CI: secret scanning (Gitleaks) and JSON validation
+├── .github/workflows/           # CI: secret scanning, JSON/ADF validation, T-SQL parsing
 ├── dataflow/                    # ADF mapping data flows
 ├── dataset/                     # HTTP, Blob, ADLS, and Azure SQL datasets
 ├── deploy/                      # Placeholder-only example ARM parameter file
 ├── factory/                     # Data Factory definition (system-assigned identity)
 ├── linkedService/               # External service connections (managed identity, no secrets)
 ├── pipeline/                    # Ingestion, transformation, and loading pipelines
+├── scripts/validate_adf.py      # Offline ADF reference, load-pattern, and ARM consistency checks
+├── sql/migrations/              # Versioned DDL, procedures, and grants for Azure SQL
+├── sql/tests/                   # Idempotency, failure, and concurrency tests
 ├── trigger/                     # Schedule and Blob event triggers
-├── vishal-covid-reporting-adf/  # Generated ARM deployment templates
+├── covid-reporting-adf/         # Generated ARM deployment templates
 ├── .gitleaks.toml               # Secret-scanner configuration
+├── .sqlfluff                    # T-SQL lint configuration
 ├── arm-template-parameters-definition.json  # ADF custom ARM parameterization
 └── publish_config.json          # ADF publish-branch configuration
 ```
@@ -80,7 +84,7 @@ To deploy and run the project, you need:
 - An Azure Data Factory instance with a **system-assigned managed identity** enabled (the default for new factories)
 - Azure Blob Storage (general-purpose v2) for configuration and population source files
 - Azure Data Lake Storage Gen2 with `raw`, `processed`, and `lookup` file systems
-- Azure SQL Database with a Microsoft Entra administrator configured, a `covid_reporting` schema, and the three destination tables listed above
+- Azure SQL Database with a Microsoft Entra administrator configured and the objects in `sql/migrations/` deployed
 - The Event Grid resource provider registered in the subscription (required by the Blob event trigger)
 - Azure CLI if deploying from the command line
 
@@ -163,7 +167,7 @@ None of these values is a secret, and no secure parameter is required. The templ
 ```bash
 az deployment group create \
   --resource-group <resource-group> \
-  --template-file vishal-covid-reporting-adf/ARMTemplateForFactory.json \
+  --template-file covid-reporting-adf/ARMTemplateForFactory.json \
   --parameters @deploy/ARMTemplateParametersForFactory.local.json
 ```
 
@@ -228,46 +232,163 @@ The Data Factory managed identity itself needs no Event Grid permission.
 
 ### Azure SQL Database
 
-1. Configure a Microsoft Entra administrator on the logical server. Microsoft Entra-only authentication is recommended; the pipelines no longer need SQL authentication.
+1. Configure a Microsoft Entra administrator on the logical server. Microsoft Entra-only authentication is recommended; the pipelines don't need SQL authentication.
 2. Allow network access from Data Factory. Use a managed virtual network with private endpoints, or enable **Allow Azure services and resources to access this server**.
-3. Connected to the database as the Entra administrator, create a contained user for the factory's managed identity. The user name is the factory name. Grant only the table-level permissions the pipelines use:
+3. Deploy the SQL objects and run `sql/migrations/006_grant_data_factory_permissions.sql` (see [Deploying the SQL objects](#deploying-the-sql-objects)). It creates the contained user for the factory's managed identity (the user name is the factory name) and grants only:
 
-```sql
-CREATE USER [<data-factory-name>] FROM EXTERNAL PROVIDER;
+| Permission | Scope | Why |
+| --- | --- | --- |
+| `EXECUTE` | schema `covid_etl` | Begin, validate, publish, and record-failure procedures, plus the pre-copy staging cleanup |
+| `INSERT`, `SELECT` | the three `covid_staging` tables | Copy activity bulk insert and destination metadata lookup |
 
--- Copy activity (bulk insert) sink: INSERT, plus SELECT so the copy
--- activity can read the destination table's column metadata.
-GRANT SELECT, INSERT ON OBJECT::covid_reporting.cases_and_deaths         TO [<data-factory-name>];
-GRANT SELECT, INSERT ON OBJECT::covid_reporting.hospital_admissions_daily TO [<data-factory-name>];
-GRANT SELECT, INSERT ON OBJECT::covid_reporting.testing                  TO [<data-factory-name>];
+The identity has **no direct permissions on the `covid_reporting` tables** and no `ALTER`, `DELETE`, `UPDATE`, or DDL rights. It can't touch the audit table except through the procedures. Production tables change only inside the `usp_publish_*` procedures, through **ownership chaining**: the procedures, staging tables, audit table, and production tables all live in schemas owned by `dbo`, so no further grant is needed. The script checks this and fails if a schema has a different owner. It also revokes the `INSERT`, `SELECT`, and `ALTER` grants required by the previous truncate-and-copy design.
 
--- The pre-copy script runs TRUNCATE TABLE, which requires ALTER on the table.
-GRANT ALTER ON OBJECT::covid_reporting.hospital_admissions_daily TO [<data-factory-name>];
-GRANT ALTER ON OBJECT::covid_reporting.testing                   TO [<data-factory-name>];
+Never add the identity to `db_owner`, `db_ddladmin`, or `db_datawriter`.
+
+## Idempotent SQL loads
+
+### Why truncate-and-copy was replaced
+
+Before, the copy activities wrote straight into the production tables:
+
+- `hospital_admissions_daily` and `testing` ran `TRUNCATE TABLE` as a pre-copy script. If the copy then failed, the table was left **empty or partially loaded** until someone reran it.
+- `cases_and_deaths` had no truncate at all, so every rerun **appended duplicate rows**.
+- `TRUNCATE` also required granting the factory `ALTER` on production tables.
+
+### Load semantics
+
+Each processed input is a **complete snapshot**, not an incremental feed:
+
+- **Cases and deaths, daily hospital admissions:** the mapping data flows rebuild the full processed output on every run. Their sinks set `truncate: true` and write a single named file. The ingestion pipeline re-downloads the complete ECDC file each time.
+- **Testing:** no transformation in this repository produces `processed/ecdc/testing`. The snapshot model is assumed from the original truncate-before-load behavior. The testing business key is also an assumption, based on the ECDC weekly testing dataset. If the input contains finer-grained rows, validation rejects the load instead of publishing ambiguous data.
+
+Publishing therefore **replaces** the table with the validated snapshot. It doesn't merge. The business keys in the table above come from each data flow's pivot grain, with per-country attributes such as population and country codes removed. Validation enforces them on every load, and `sql/migrations/005` adds unique indexes for them.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    A[Processed ADLS data] -->|copy + load_run_id = pipeline RunId| B[Run-scoped staging table<br/>covid_staging.*]
+    B --> C{Validation<br/>non-empty · row count = rowsCopied<br/>no NULL or duplicate keys}
+    C -->|pass| D[Transactional publication<br/>app lock · DELETE + INSERT · COMMIT]
+    C -->|fail| F[Audit: Failed · staging cleared<br/>production unchanged]
+    D --> E[Production table + audit record<br/>covid_reporting.* · covid_etl.load_audit]
+    D -->|error → ROLLBACK| F
 ```
 
-Do **not** add the identity to `db_owner`, `db_ddladmin`, or even `db_datawriter`. Grant permissions on these three tables only.
+Each `pl_sqlize_*` pipeline runs the same sequence:
 
-#### The `TRUNCATE TABLE` tradeoff
+| Step | Activity | What it does |
+| --- | --- | --- |
+| 1 | `begin_load` → `covid_etl.usp_begin_load` | Adds a `Started` row to `covid_etl.load_audit`, clears this run's staging rows, and purges rows left behind by abandoned runs. |
+| 2 | Copy activity (original name and column mappings kept) | Copies the processed file into `covid_staging.<table>`, stamping every row with `load_run_id = @pipeline().RunId`. Its pre-copy script calls `usp_clear_staged_load`, so a copy retry never duplicates staged rows. |
+| 3 | `validate_staged_snapshot` → `usp_validate_<table>` | Rejects an empty stage (unless `allowEmptySnapshot = true`), a staged count that differs from the copy's `rowsCopied`, NULL business keys, and duplicate business keys. Marks the run `Validated`. |
+| 4 | `publish_snapshot` → `usp_publish_<table>` | In **one transaction**: takes an exclusive `sp_getapplock` for the table, re-checks the stage, runs `DELETE` and `INSERT` on production, verifies the published count, removes the run's staging rows, and marks the audit row `Succeeded`. Any error rolls back everything. |
+| 5 | `record_load_failure` → `usp_record_load_failure` | Runs only if a previous step failed or was skipped. Marks the audit row `Failed` and clears the run's staging rows. It never touches production. |
+| 6 | `fail_pipeline` (Fail activity) | Makes the pipeline run report **Failed** after the failure is recorded. |
 
-`TRUNCATE TABLE` requires `ALTER` on the table. That permission also allows the identity to change the table's schema, such as adding or dropping columns, which is more than a loader needs. The grants above preserve the current pipeline behavior and limit `ALTER` to the two truncated tables. A tighter design, recommended as a follow-up, wraps the truncate in an owner-signed stored procedure:
+Publication depends only on successful validation, and validation depends only on a successful copy. After a failed copy or validation, the publish step is skipped.
+
+**Failure behavior.** Publication uses `SET XACT_ABORT ON` with `TRY/CATCH`. Every error rolls back, and the original error is rethrown with `THROW`. Readers see either the old snapshot or the new one, never a mix. Azure SQL Database has read committed snapshot isolation on by default, so readers are not blocked during the swap. A failed publish keeps the staged rows and the `Validated` status, so the ADF activity retry can publish the same snapshot. The failure step cleans up only after retries are exhausted.
+
+**Idempotency.** Each run has its own staging rows, and every procedure is safe to repeat for the same run ID:
+
+- A repeated `begin_load` restarts the run.
+- A repeated `publish` for a run that already published is a no-op.
+- A new run of the same snapshot replaces the table with identical data.
+
+**Concurrency.** Three independent layers prevent overlapping runs from corrupting a table:
+
+1. Each SQL pipeline sets `"concurrency": 1`, so ADF queues overlapping triggers or manual runs instead of running them in parallel.
+2. Publication takes an exclusive, transaction-scoped `sp_getapplock` per table. Even runs started outside ADF are serialized. A run that can't get the lock within 60 seconds fails with error 50016 and changes nothing.
+3. An older run can't overwrite a newer one. If a run that started later has already published, the older run is marked `Superseded` and production stays as it is. Staging rows are scoped by run ID, so concurrent copies never see each other's data.
+
+No dynamic SQL is used. Each table has its own explicit procedure, and the shared procedures accept a target name only from a fixed allow-list (error 50001 otherwise).
+
+**Audit.** `covid_etl.load_audit` stores one row per pipeline run and table:
+
+- run ID and pipeline name
+- status (`Started`, `Validated`, `Succeeded`, `Superseded`, or `Failed`)
+- start, validation, and completion times
+- copied, staged, previous, and published row counts
+- a short error summary
+
+It never stores row data.
 
 ```sql
-CREATE PROCEDURE covid_reporting.usp_reset_hospital_admissions_daily
-WITH EXECUTE AS OWNER
-AS
-BEGIN
-    SET NOCOUNT ON;
-    TRUNCATE TABLE covid_reporting.hospital_admissions_daily;
-END;
-GO
-GRANT EXECUTE ON OBJECT::covid_reporting.usp_reset_hospital_admissions_daily TO [<data-factory-name>];
-REVOKE ALTER ON OBJECT::covid_reporting.hospital_admissions_daily FROM [<data-factory-name>];
+SELECT TOP (20) target_table, status, started_at_utc, completed_at_utc,
+       copied_row_count, staged_row_count, previous_row_count, published_row_count, error_summary
+FROM covid_etl.load_audit ORDER BY load_audit_id DESC;
 ```
 
-After that, set the copy activity's `preCopyScript` to `EXEC covid_reporting.usp_reset_hospital_admissions_daily;`, and repeat the pattern for `testing`. Another option is to load into a staging table and swap it into place inside a stored procedure. Either way, the identity can only empty the table and cannot alter its structure. These pipeline changes are not applied in this repository, which keeps the current behavior.
+### SQL objects
 
-`pl_sqlize_cases_and_deaths` appends rows without a pre-copy truncate. Its activity description mentions `TRUNCATE TABLE`, but no truncate is configured. Rerunning it therefore creates duplicate rows. Handle this with the same stored-procedure pattern if needed. Don't grant broader permissions to work around it.
+| File | Creates |
+| --- | --- |
+| `sql/migrations/001_create_target_tables.sql` | `covid_reporting` schema and the three production tables (only if missing) |
+| `sql/migrations/002_create_staging_tables.sql` | `covid_staging` schema and three run-scoped staging tables |
+| `sql/migrations/003_create_load_audit_table.sql` | `covid_etl` schema and `covid_etl.load_audit` |
+| `sql/migrations/004_create_publish_procedures.sql` | `usp_begin_load`, `usp_clear_staged_load`, `usp_purge_abandoned_staging`, `usp_record_load_failure`, and one `usp_validate_*` and `usp_publish_*` per table |
+| `sql/migrations/005_create_business_key_indexes.sql` | Unique business-key indexes. The script skips any table that still holds duplicates from the old append-only loads. |
+| `sql/migrations/006_grant_data_factory_permissions.sql` | The managed-identity database user and least-privilege grants |
+| `sql/tests/idempotency_checks.sql` | Automated idempotency and failure tests (T1–T11) |
+| `sql/tests/concurrency_manual.sql` | Two-session lock-contention check |
+
+### Deploying the SQL objects
+
+Connect as the server's Microsoft Entra administrator. Run the migrations in order. They are safe to rerun.
+
+```bash
+S=<sql-server-name>.database.windows.net
+D=<sql-database-name>
+for f in 001_create_target_tables 002_create_staging_tables 003_create_load_audit_table \
+         004_create_publish_procedures 005_create_business_key_indexes; do
+  sqlcmd -S "$S" -d "$D" -G -b -i "sql/migrations/$f.sql"
+done
+sqlcmd -S "$S" -d "$D" -G -b -v DataFactoryName="<data-factory-name>" \
+  -i sql/migrations/006_grant_data_factory_permissions.sql
+```
+
+If your production tables already exist with different column lengths, align the staging tables in `002` with them first. After the first successful run of the new pipelines has replaced any duplicate rows, run `005` again so the unique indexes are created.
+
+### Rerunning a failed load
+
+A failure never changes the published table, so recovery is simply:
+
+1. Check why the load failed:
+
+   ```sql
+   SELECT * FROM covid_etl.load_audit WHERE status = 'Failed' ORDER BY load_audit_id DESC;
+   ```
+
+2. Fix the cause, for example the processed file, SQL connectivity, or permissions.
+3. Trigger the pipeline again, or use **Rerun** in ADF Monitor. A rerun gets a new run ID and a fresh staging area.
+
+You never need to truncate or clean up tables by hand; abandoned staging rows are purged automatically. To deliberately publish an empty snapshot, run the pipeline with `allowEmptySnapshot = true`.
+
+### Running the idempotency tests
+
+The tests replace production-table contents with fixtures. Run them **only** against a disposable database whose name contains `test` or `dev`; the script refuses to run anywhere else.
+
+```bash
+# after applying migrations 001-005 to the test database
+sqlcmd -S <sql-server-name>.database.windows.net -d <test-database> -G -b \
+  -i sql/tests/idempotency_checks.sql
+```
+
+The script prints PASS or FAIL for each check and exits with error 50999 if any fail. It covers:
+
+- identical row count and checksum after a rerun
+- no-op publish retries
+- no duplicate business keys
+- rejection of duplicate, partial, and empty stages
+- a fault-injected publish failure that rolls back completely
+- an older overlapping run that is superseded
+- staging and production column parity
+- the same guarantees for the other two tables
+- rejection of unknown targets
+
+`sql/tests/concurrency_manual.sql` walks through a two-session lock test. Offline checks for the ADF side run in CI with `python3 scripts/validate_adf.py`. They verify references, the stage → validate → publish pattern, mappings, and ARM-template consistency.
 
 ## Triggers
 
@@ -284,7 +405,7 @@ Review trigger start times, storage scopes, and enabled states before activating
 2. Add the required configuration and lookup files to storage.
 3. Run ingestion pipelines and verify files in the ADLS raw zone.
 4. Run transformation pipelines and inspect the processed outputs.
-5. Run SQL-loading pipelines and validate row counts in the destination tables.
+5. Run SQL-loading pipelines, then check `covid_etl.load_audit` for `Succeeded` rows and the published row counts.
 6. Use the ADF Monitor hub to inspect activity runs, mapping-data-flow diagnostics, and failures.
 
 Pipeline and path names are preserved from the original ADF project, including `pl_ingest_popuation_data` and `hospitak_admissions_daily`. Rename them only after updating every dependent dataset, pipeline, trigger, and deployment artifact.
@@ -313,7 +434,7 @@ Always use `--redact` so findings never print secret values. The `security-scan`
 - [ ] `gitleaks dir` **and** `gitleaks git` report no leaks
 - [ ] Any credential that was ever committed, even encrypted, has been rotated or its resource deleted
 - [ ] Git history has been cleaned if it contains environment identifiers or credentials
-- [ ] Storage and SQL access follow the least-privilege tables above; no `db_owner`
+- [ ] Storage and SQL access follow the least-privilege tables above; the factory has no direct rights on `covid_reporting` and no `db_owner`
 - [ ] GitHub secret scanning and push protection are enabled in the repository settings
 
 ## License

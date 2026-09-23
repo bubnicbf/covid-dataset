@@ -45,6 +45,20 @@ jobs:
           find . -path ./.git -prune -o -name '*.json' -print0 \
             | xargs -0 -n1 python3 -m json.tool > /dev/null
 
+      - name: Validate ADF references, SQL-load pattern and ARM consistency
+        run: python3 scripts/validate_adf.py
+
+      - name: Parse T-SQL migrations and tests (sqlfluff, tsql dialect)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet "sqlfluff==4.3.0"
+          mkdir -p /tmp/sqllint
+          for f in sql/migrations/*.sql sql/tests/*.sql; do
+            # strip sqlcmd-only directives/variables, which are not T-SQL
+            sed -E -e '/^:(on error|setvar)/d' -e 's/\$\(DataFactoryName\)/adf_identity/g' "$f" > "/tmp/sqllint/$(basename "$f")"
+          done
+          sqlfluff lint --config .sqlfluff /tmp/sqllint
+
       - name: Block encryptedCredential and placeholder regressions
         run: |
           set -euo pipefail

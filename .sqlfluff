@@ -1,0 +1,6 @@
+[sqlfluff]
+dialect = tsql
+max_line_length = 140
+large_file_skip_byte_limit = 0
+# CI enforces T-SQL parsing and keyword capitalisation; layout rules are advisory.
+rules = CP01

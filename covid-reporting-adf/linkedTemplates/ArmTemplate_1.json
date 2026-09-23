@@ -5,7 +5,7 @@
 		"factoryName": {
 			"type": "string",
 			"metadata": "Data Factory name",
-			"defaultValue": "vishal-covid-reporting-adf"
+			"defaultValue": "covid-reporting-adf"
 		},
 		"tr_ingest_population_data_scope": {
 			"type": "string"
@@ -357,13 +357,61 @@
 			"properties": {
 				"activities": [
 					{
-						"name": "copy_cases_and_deaths",
-						"description": "TRUNCATE TABLE covid_reporting.cases_and_deaths;",
-						"type": "Copy",
+						"name": "begin_load",
+						"description": "Registers the run in covid_etl.load_audit and clears this run's staging rows.",
+						"type": "SqlServerStoredProcedure",
 						"dependsOn": [],
 						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_begin_load]",
+							"storedProcedureParameters": {
+								"pipeline_name": {
+									"value": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								},
+								"target_table": {
+									"value": "cases_and_deaths",
+									"type": "String"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "copy_cases_and_deaths",
+						"description": "Copies the processed snapshot into run-scoped staging (covid_staging.cases_and_deaths). Production is never written here.",
+						"type": "Copy",
+						"dependsOn": [
+							{
+								"activity": "begin_load",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
 							"timeout": "0.02:00:00",
-							"retry": 0,
+							"retry": 2,
 							"retryIntervalInSeconds": 30,
 							"secureOutput": false,
 							"secureInput": false
@@ -380,10 +428,23 @@
 								},
 								"formatSettings": {
 									"type": "DelimitedTextReadSettings"
-								}
+								},
+								"additionalColumns": [
+									{
+										"name": "load_run_id",
+										"value": {
+											"value": "@pipeline().RunId",
+											"type": "Expression"
+										}
+									}
+								]
 							},
 							"sink": {
 								"type": "AzureSqlSink",
+								"preCopyScript": {
+									"value": "EXEC covid_etl.usp_clear_staged_load @target_table = N'cases_and_deaths', @pipeline_run_id = '@{pipeline().RunId}';",
+									"type": "Expression"
+								},
 								"writeBehavior": "insert",
 								"sqlWriterUseTableLock": false
 							},
@@ -406,16 +467,194 @@
 						],
 						"outputs": [
 							{
-								"referenceName": "ds_sql_cases_and_deaths",
+								"referenceName": "ds_sql_staging_cases_and_deaths",
 								"type": "DatasetReference",
 								"parameters": {}
 							}
 						]
+					},
+					{
+						"name": "validate_staged_snapshot",
+						"description": "Rejects empty, partial, NULL-key or duplicate-key snapshots before publication.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "copy_cases_and_deaths",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_validate_cases_and_deaths]",
+							"storedProcedureParameters": {
+								"allow_empty": {
+									"value": {
+										"value": "@pipeline().parameters.allowEmptySnapshot",
+										"type": "Expression"
+									},
+									"type": "Boolean"
+								},
+								"expected_row_count": {
+									"value": {
+										"value": "@activity('copy_cases_and_deaths').output.rowsCopied",
+										"type": "Expression"
+									},
+									"type": "Int64"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "publish_snapshot",
+						"description": "Replaces covid_reporting.cases_and_deaths with the validated snapshot in one transaction under an exclusive app lock. Idempotent on retry.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "validate_staged_snapshot",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:30:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_publish_cases_and_deaths]",
+							"storedProcedureParameters": {
+								"allow_empty": {
+									"value": {
+										"value": "@pipeline().parameters.allowEmptySnapshot",
+										"type": "Expression"
+									},
+									"type": "Boolean"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "record_load_failure",
+						"description": "Runs when any step fails: marks the audit row Failed and clears this run's staging rows. Production is untouched.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "publish_snapshot",
+								"dependencyConditions": [
+									"Failed",
+									"Skipped"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_record_load_failure]",
+							"storedProcedureParameters": {
+								"error_summary": {
+									"value": {
+										"value": "@concat('ADF activity failure in pipeline ', pipeline().Pipeline, '; see ADF Monitor for run ', pipeline().RunId)",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_name": {
+									"value": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								},
+								"target_table": {
+									"value": "cases_and_deaths",
+									"type": "String"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "fail_pipeline",
+						"type": "Fail",
+						"dependsOn": [
+							{
+								"activity": "record_load_failure",
+								"dependencyConditions": [
+									"Completed"
+								]
+							}
+						],
+						"userProperties": [],
+						"typeProperties": {
+							"message": {
+								"value": "@concat('Load of covid_reporting.cases_and_deaths failed; the previous production snapshot was kept. Pipeline run ', pipeline().RunId, '. See covid_etl.load_audit.')",
+								"type": "Expression"
+							},
+							"errorCode": "SqlSnapshotLoadFailed"
+						}
 					}
 				],
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"concurrency": 1,
+				"parameters": {
+					"allowEmptySnapshot": {
+						"type": "bool",
+						"defaultValue": false
+					}
 				},
 				"folder": {
 					"name": "sqlize"
@@ -431,12 +670,60 @@
 			"properties": {
 				"activities": [
 					{
-						"name": "copy hospital admissions daily",
-						"type": "Copy",
+						"name": "begin_load",
+						"description": "Registers the run in covid_etl.load_audit and clears this run's staging rows.",
+						"type": "SqlServerStoredProcedure",
 						"dependsOn": [],
 						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_begin_load]",
+							"storedProcedureParameters": {
+								"pipeline_name": {
+									"value": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								},
+								"target_table": {
+									"value": "hospital_admissions_daily",
+									"type": "String"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "copy hospital admissions daily",
+						"type": "Copy",
+						"dependsOn": [
+							{
+								"activity": "begin_load",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
 							"timeout": "0.12:00:00",
-							"retry": 0,
+							"retry": 2,
 							"retryIntervalInSeconds": 30,
 							"secureOutput": false,
 							"secureInput": false
@@ -453,11 +740,23 @@
 								},
 								"formatSettings": {
 									"type": "DelimitedTextReadSettings"
-								}
+								},
+								"additionalColumns": [
+									{
+										"name": "load_run_id",
+										"value": {
+											"value": "@pipeline().RunId",
+											"type": "Expression"
+										}
+									}
+								]
 							},
 							"sink": {
 								"type": "AzureSqlSink",
-								"preCopyScript": "TRUNCATE TABLE covid_reporting.hospital_admissions_daily;",
+								"preCopyScript": {
+									"value": "EXEC covid_etl.usp_clear_staged_load @target_table = N'hospital_admissions_daily', @pipeline_run_id = '@{pipeline().RunId}';",
+									"type": "Expression"
+								},
 								"writeBehavior": "insert",
 								"sqlWriterUseTableLock": false,
 								"disableMetricsCollection": false
@@ -481,16 +780,195 @@
 						],
 						"outputs": [
 							{
-								"referenceName": "ds_sql_hospital_admissions_daily",
+								"referenceName": "ds_sql_staging_hospital_admissions_daily",
 								"type": "DatasetReference",
 								"parameters": {}
 							}
-						]
+						],
+						"description": "Copies the processed snapshot into run-scoped staging (covid_staging.hospital_admissions_daily). Production is never written here."
+					},
+					{
+						"name": "validate_staged_snapshot",
+						"description": "Rejects empty, partial, NULL-key or duplicate-key snapshots before publication.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "copy hospital admissions daily",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_validate_hospital_admissions_daily]",
+							"storedProcedureParameters": {
+								"allow_empty": {
+									"value": {
+										"value": "@pipeline().parameters.allowEmptySnapshot",
+										"type": "Expression"
+									},
+									"type": "Boolean"
+								},
+								"expected_row_count": {
+									"value": {
+										"value": "@activity('copy hospital admissions daily').output.rowsCopied",
+										"type": "Expression"
+									},
+									"type": "Int64"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "publish_snapshot",
+						"description": "Replaces covid_reporting.hospital_admissions_daily with the validated snapshot in one transaction under an exclusive app lock. Idempotent on retry.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "validate_staged_snapshot",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:30:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_publish_hospital_admissions_daily]",
+							"storedProcedureParameters": {
+								"allow_empty": {
+									"value": {
+										"value": "@pipeline().parameters.allowEmptySnapshot",
+										"type": "Expression"
+									},
+									"type": "Boolean"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "record_load_failure",
+						"description": "Runs when any step fails: marks the audit row Failed and clears this run's staging rows. Production is untouched.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "publish_snapshot",
+								"dependencyConditions": [
+									"Failed",
+									"Skipped"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_record_load_failure]",
+							"storedProcedureParameters": {
+								"error_summary": {
+									"value": {
+										"value": "@concat('ADF activity failure in pipeline ', pipeline().Pipeline, '; see ADF Monitor for run ', pipeline().RunId)",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_name": {
+									"value": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								},
+								"target_table": {
+									"value": "hospital_admissions_daily",
+									"type": "String"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "fail_pipeline",
+						"type": "Fail",
+						"dependsOn": [
+							{
+								"activity": "record_load_failure",
+								"dependencyConditions": [
+									"Completed"
+								]
+							}
+						],
+						"userProperties": [],
+						"typeProperties": {
+							"message": {
+								"value": "@concat('Load of covid_reporting.hospital_admissions_daily failed; the previous production snapshot was kept. Pipeline run ', pipeline().RunId, '. See covid_etl.load_audit.')",
+								"type": "Expression"
+							},
+							"errorCode": "SqlSnapshotLoadFailed"
+						}
 					}
 				],
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"concurrency": 1,
+				"parameters": {
+					"allowEmptySnapshot": {
+						"type": "bool",
+						"defaultValue": false
+					}
 				},
 				"folder": {
 					"name": "sqlize"
@@ -506,12 +984,60 @@
 			"properties": {
 				"activities": [
 					{
-						"name": "Copy Testing",
-						"type": "Copy",
+						"name": "begin_load",
+						"description": "Registers the run in covid_etl.load_audit and clears this run's staging rows.",
+						"type": "SqlServerStoredProcedure",
 						"dependsOn": [],
 						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_begin_load]",
+							"storedProcedureParameters": {
+								"pipeline_name": {
+									"value": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								},
+								"target_table": {
+									"value": "testing",
+									"type": "String"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "Copy Testing",
+						"type": "Copy",
+						"dependsOn": [
+							{
+								"activity": "begin_load",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
 							"timeout": "0.12:00:00",
-							"retry": 0,
+							"retry": 2,
 							"retryIntervalInSeconds": 30,
 							"secureOutput": false,
 							"secureInput": false
@@ -528,11 +1054,23 @@
 								},
 								"formatSettings": {
 									"type": "DelimitedTextReadSettings"
-								}
+								},
+								"additionalColumns": [
+									{
+										"name": "load_run_id",
+										"value": {
+											"value": "@pipeline().RunId",
+											"type": "Expression"
+										}
+									}
+								]
 							},
 							"sink": {
 								"type": "AzureSqlSink",
-								"preCopyScript": "TRUNCATE TABLE covid_reporting.testing;",
+								"preCopyScript": {
+									"value": "EXEC covid_etl.usp_clear_staged_load @target_table = N'testing', @pipeline_run_id = '@{pipeline().RunId}';",
+									"type": "Expression"
+								},
 								"writeBehavior": "insert",
 								"sqlWriterUseTableLock": false,
 								"disableMetricsCollection": false
@@ -650,6 +1188,17 @@
 											"type": "String",
 											"physicalType": "varchar"
 										}
+									},
+									{
+										"source": {
+											"name": "load_run_id",
+											"type": "String"
+										},
+										"sink": {
+											"name": "load_run_id",
+											"type": "Guid",
+											"physicalType": "uniqueidentifier"
+										}
 									}
 								],
 								"typeConversion": true,
@@ -668,16 +1217,195 @@
 						],
 						"outputs": [
 							{
-								"referenceName": "ds_sql_testing",
+								"referenceName": "ds_sql_staging_testing",
 								"type": "DatasetReference",
 								"parameters": {}
 							}
-						]
+						],
+						"description": "Copies the processed snapshot into run-scoped staging (covid_staging.testing). Production is never written here."
+					},
+					{
+						"name": "validate_staged_snapshot",
+						"description": "Rejects empty, partial, NULL-key or duplicate-key snapshots before publication.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "Copy Testing",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_validate_testing]",
+							"storedProcedureParameters": {
+								"allow_empty": {
+									"value": {
+										"value": "@pipeline().parameters.allowEmptySnapshot",
+										"type": "Expression"
+									},
+									"type": "Boolean"
+								},
+								"expected_row_count": {
+									"value": {
+										"value": "@activity('Copy Testing').output.rowsCopied",
+										"type": "Expression"
+									},
+									"type": "Int64"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "publish_snapshot",
+						"description": "Replaces covid_reporting.testing with the validated snapshot in one transaction under an exclusive app lock. Idempotent on retry.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "validate_staged_snapshot",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:30:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_publish_testing]",
+							"storedProcedureParameters": {
+								"allow_empty": {
+									"value": {
+										"value": "@pipeline().parameters.allowEmptySnapshot",
+										"type": "Expression"
+									},
+									"type": "Boolean"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "record_load_failure",
+						"description": "Runs when any step fails: marks the audit row Failed and clears this run's staging rows. Production is untouched.",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "publish_snapshot",
+								"dependencyConditions": [
+									"Failed",
+									"Skipped"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.00:10:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"storedProcedureName": "[covid_etl].[usp_record_load_failure]",
+							"storedProcedureParameters": {
+								"error_summary": {
+									"value": {
+										"value": "@concat('ADF activity failure in pipeline ', pipeline().Pipeline, '; see ADF Monitor for run ', pipeline().RunId)",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_name": {
+									"value": {
+										"value": "@pipeline().Pipeline",
+										"type": "Expression"
+									},
+									"type": "String"
+								},
+								"pipeline_run_id": {
+									"value": {
+										"value": "@pipeline().RunId",
+										"type": "Expression"
+									},
+									"type": "Guid"
+								},
+								"target_table": {
+									"value": "testing",
+									"type": "String"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_sql_covid_db",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "fail_pipeline",
+						"type": "Fail",
+						"dependsOn": [
+							{
+								"activity": "record_load_failure",
+								"dependencyConditions": [
+									"Completed"
+								]
+							}
+						],
+						"userProperties": [],
+						"typeProperties": {
+							"message": {
+								"value": "@concat('Load of covid_reporting.testing failed; the previous production snapshot was kept. Pipeline run ', pipeline().RunId, '. See covid_etl.load_audit.')",
+								"type": "Expression"
+							},
+							"errorCode": "SqlSnapshotLoadFailed"
+						}
 					}
 				],
 				"policy": {
 					"elapsedTimeMetric": {},
 					"cancelAfter": {}
+				},
+				"concurrency": 1,
+				"parameters": {
+					"allowEmptySnapshot": {
+						"type": "bool",
+						"defaultValue": false
+					}
 				},
 				"folder": {
 					"name": "sqlize"
