@@ -2,7 +2,7 @@
 
 An Azure Data Factory (ADF) project that ingests public COVID-19 and population data, transforms it in Azure Data Lake Storage Gen2, and loads curated datasets into Azure SQL Database.
 
-The repository contains the source-controlled ADF resources and generated ARM templates needed to deploy the factory. It does not include source data, database DDL, or cloud credentials.
+The repository contains the source-controlled ADF resources and generated ARM templates needed to deploy the factory. It does not include source data, database DDL, or cloud credentials. Azure services are accessed with the Data Factory managed identity, so no secrets are required in source control.
 
 ## Architecture
 
@@ -58,13 +58,17 @@ The hospital-admissions and testing loaders truncate their destination tables be
 
 ```text
 .
+├── .github/workflows/           # CI: secret scanning (Gitleaks) and JSON validation
 ├── dataflow/                    # ADF mapping data flows
 ├── dataset/                     # HTTP, Blob, ADLS, and Azure SQL datasets
-├── factory/                     # Data Factory definition
-├── linkedService/               # External service connections
+├── deploy/                      # Placeholder-only example ARM parameter file
+├── factory/                     # Data Factory definition (system-assigned identity)
+├── linkedService/               # External service connections (managed identity, no secrets)
 ├── pipeline/                    # Ingestion, transformation, and loading pipelines
 ├── trigger/                     # Schedule and Blob event triggers
 ├── vishal-covid-reporting-adf/  # Generated ARM deployment templates
+├── .gitleaks.toml               # Secret-scanner configuration
+├── arm-template-parameters-definition.json  # ADF custom ARM parameterization
 └── publish_config.json          # ADF publish-branch configuration
 ```
 
@@ -73,14 +77,14 @@ The hospital-admissions and testing loaders truncate their destination tables be
 To deploy and run the project, you need:
 
 - An Azure subscription and resource group
-- Azure Data Factory
-- Azure Blob Storage for configuration and population source files
+- An Azure Data Factory instance with a **system-assigned managed identity** enabled (the default for new factories)
+- Azure Blob Storage (general-purpose v2) for configuration and population source files
 - Azure Data Lake Storage Gen2 with `raw`, `processed`, and `lookup` file systems
-- Azure SQL Database with a `covid_reporting` schema and the three destination tables listed above
-- Permissions for ADF to read and write the storage resources and connect to Azure SQL Database
+- Azure SQL Database with a Microsoft Entra administrator configured, a `covid_reporting` schema, and the three destination tables listed above
+- The Event Grid resource provider registered in the subscription (required by the Blob event trigger)
 - Azure CLI if deploying from the command line
 
-The storage account names, URLs, and event-trigger scope in the checked-in templates reflect the original environment. Replace them with values for your own Azure resources.
+All environment-specific values in this repository are placeholders such as `<blob-storage-account>`. Supply real values only at deployment time, through a local parameter file that is never committed.
 
 ## Required storage objects
 
@@ -95,39 +99,175 @@ The pipelines expect the following objects to exist before execution:
 
 The repository defines processed testing and SQL testing datasets, but it does not contain the upstream transformation that creates the processed testing file.
 
-## Deployment
+## Authentication design
 
-### Configure the ARM parameters
+No linked service in this repository stores a credential. Azure services are accessed with the Data Factory **system-assigned managed identity**, and access is controlled with Azure RBAC and SQL database permissions.
 
-Copy and update:
+| Linked service | Connector | Authentication | Stored in Git |
+| --- | --- | --- | --- |
+| `ls_ablob_covidreporting_sa` | Azure Blob Storage (`AzureBlobStorage`) | System-assigned managed identity (`serviceEndpoint` + `accountKind`) | Endpoint placeholder only |
+| `ls_adls_covidreporting_dl` | ADLS Gen2 (`AzureBlobFS`) | System-assigned managed identity (`url` only) | Endpoint placeholder only |
+| `ls_sql_covid_db` | Azure SQL Database, recommended version (`AzureSqlDatabase`) | `authenticationType: SystemAssignedManagedIdentity` | Server and database placeholders only |
+| `ls_http_opendata_ecdc_europe_eu` | HTTP (`HttpServer`) | Anonymous (public ECDC open data) | Parameterized base URL, no credential |
 
-```text
-vishal-covid-reporting-adf/ARMTemplateParametersForFactory.json
+The factory definition declares `"identity": {"type": "SystemAssigned"}` only. Azure generates the `principalId` and `tenantId` at creation time, so they are not stored in the repository.
+
+### Azure Key Vault policy
+
+Every current connector supports managed identity, so the project does **not** include a Key Vault linked service. Adding an unused one would only create another resource to secure.
+
+If a future connector cannot use managed identity (for example, a third-party API key), follow this pattern instead of committing a credential or an ADF `encryptedCredential`:
+
+1. Create a Key Vault that uses the Azure RBAC permission model.
+2. Grant the Data Factory managed identity **Key Vault Secrets User** on that vault, or on the individual secret for narrower scope. Do not grant Key Vault Administrator or Secrets Officer.
+3. Add an `AzureKeyVault` linked service whose `baseUrl` is `https://<key-vault-name>.vault.azure.net/`. `arm-template-parameters-definition.json` already exposes `baseUrl` as a deployment parameter with no default.
+4. Reference the secret from the other linked service:
+
+```json
+"password": {
+    "type": "AzureKeyVaultSecret",
+    "store": { "referenceName": "<key-vault-linked-service>", "type": "LinkedServiceReference" },
+    "secretName": "<secret-name>"
+}
 ```
 
-At minimum, provide environment-specific values for:
+## Deployment
 
-- `factoryName`
-- `ls_ablob_covidreporting_sa_connectionString`
-- `ls_adls_covidreporting_dl_accountKey`
-- `ls_sql_covid_db_connectionString`
-- `ls_adls_covidreporting_dl_properties_typeProperties_url`
-- `tr_ingest_population_data_properties_typeProperties_scope`
+### 1. Create the factory
 
-Do not commit populated connection strings, account keys, or other secrets. Prefer Azure Key Vault-backed linked services for long-lived environments.
+The generated ARM templates deploy the factory's child resources, such as linked services, datasets, pipelines, data flows, and triggers. They do not create the factory itself. Create the factory first in the Azure portal or with `az datafactory create`, and confirm that its system-assigned managed identity is enabled.
 
-### Deploy the factory
+### 2. Provide the deployment parameters
 
-After signing in with Azure CLI, deploy the generated ARM template:
+Copy the placeholder example to a local file. Files matching `*.local.json` are ignored by Git.
+
+```bash
+cp deploy/ARMTemplateParametersForFactory.example.json deploy/ARMTemplateParametersForFactory.local.json
+```
+
+| Parameter | Example format | Notes |
+| --- | --- | --- |
+| `factoryName` | `<data-factory-name>` | Name of the existing factory |
+| `ls_ablob_covidreporting_sa_serviceEndpoint` | `https://<blob-storage-account>.blob.core.windows.net/` | Blob Storage endpoint |
+| `ls_adls_covidreporting_dl_url` | `https://<adls-storage-account>.dfs.core.windows.net/` | ADLS Gen2 DFS endpoint |
+| `ls_sql_covid_db_server` | `<sql-server-name>.database.windows.net` | Logical SQL server FQDN |
+| `ls_sql_covid_db_database` | `<sql-database-name>` | Target database |
+| `tr_ingest_population_data_scope` | `/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Storage/storageAccounts/<blob-storage-account>` | Resource ID of the Blob account watched by the event trigger |
+
+None of these values is a secret, and no secure parameter is required. The template intentionally provides no defaults for them, so a deployment fails fast if any value is missing.
+
+> **Warning:** Never commit a populated parameter file. Keep real values in `*.local.json` files, pipeline variables, or your CI/CD system's secret or variable store.
+
+### 3. Deploy
 
 ```bash
 az deployment group create \
   --resource-group <resource-group> \
   --template-file vishal-covid-reporting-adf/ARMTemplateForFactory.json \
-  --parameters @vishal-covid-reporting-adf/ARMTemplateParametersForFactory.json
+  --parameters @deploy/ARMTemplateParametersForFactory.local.json
 ```
 
-You can also connect the repository to ADF Studio and work with the JSON resources directly. The configured publish branch is `main`.
+Triggers deploy in the `Stopped` state. Start them after completing the access configuration below.
+
+### ADF Studio and Git integration
+
+`arm-template-parameters-definition.json` controls which properties ADF Studio parameterizes when it publishes ARM templates. It exposes storage endpoints, SQL server and database names, the Key Vault URL, and the event-trigger scope without default values, and it turns any future `connectionString`, `sasUri`, or `sasToken` into a Key Vault or secure-string parameter.
+
+When you connect a real factory to Git, ADF writes the real endpoint values into the linked-service JSON and the generated parameter file. Do that in a private fork or branch. Before merging into this public repository, restore the placeholders and run the secret scanner.
+
+## Required access (least privilege)
+
+### Data Factory managed identity: storage
+
+Assign roles at **container (file system) scope**, not account or subscription scope. These roles are based on what the pipelines actually do:
+
+| Account | Container / file system | Operations | Role |
+| --- | --- | --- | --- |
+| Blob | `configs` | Lookup reads `ecdc_file_list.json` | Storage Blob Data Reader |
+| Blob | `population` | Validation, Get Metadata, Copy source, **Delete** after copy | Storage Blob Data Contributor |
+| ADLS Gen2 | `raw` | Copy sink (ingestion); data flow source | Storage Blob Data Contributor |
+| ADLS Gen2 | `processed` | Data flow sink; SQL-load copy source | Storage Blob Data Contributor |
+| ADLS Gen2 | `lookup` | Data flow lookups (country, date) | Storage Blob Data Reader |
+
+```bash
+ADF_PRINCIPAL_ID=$(az resource show \
+  --resource-group <resource-group> \
+  --resource-type Microsoft.DataFactory/factories \
+  --name <data-factory-name> \
+  --query identity.principalId -o tsv)
+
+BLOB_ID=$(az storage account show -g <resource-group> -n <blob-storage-account> --query id -o tsv)
+ADLS_ID=$(az storage account show -g <resource-group> -n <adls-storage-account> --query id -o tsv)
+
+assign() { # role, scope
+  az role assignment create --assignee-object-id "$ADF_PRINCIPAL_ID" \
+    --assignee-principal-type ServicePrincipal --role "$1" --scope "$2"
+}
+assign "Storage Blob Data Reader"      "$BLOB_ID/blobServices/default/containers/configs"
+assign "Storage Blob Data Contributor" "$BLOB_ID/blobServices/default/containers/population"
+assign "Storage Blob Data Contributor" "$ADLS_ID/blobServices/default/containers/raw"
+assign "Storage Blob Data Contributor" "$ADLS_ID/blobServices/default/containers/processed"
+assign "Storage Blob Data Reader"      "$ADLS_ID/blobServices/default/containers/lookup"
+```
+
+Storage notes:
+
+- Keep `accountKind` set to `StorageV2`. Managed identity isn't supported in data flows when `accountKind` is empty or `Storage`.
+- If a storage firewall is enabled, either use a managed virtual network and private endpoints or enable **Allow trusted Microsoft services**. The trusted-services exception works only with managed-identity authentication.
+- Consider disabling shared-key access (`allowSharedKeyAccess=false`) on both accounts once the pipelines run successfully with managed identity.
+
+### Deploying user or pipeline identity
+
+| Scope | Permission | Why |
+| --- | --- | --- |
+| Data Factory | Data Factory Contributor | Deploy linked services, datasets, pipelines, data flows, and triggers |
+| Blob storage account | `Microsoft.EventGrid/eventSubscriptions/write`, for example **EventGrid EventSubscription Contributor** | Create the storage event trigger's Event Grid subscription |
+| Storage containers | Role Based Access Control Administrator (constrained to the Storage Blob Data roles) or User Access Administrator, **one-time** | Create the role assignments above |
+
+The Data Factory managed identity itself needs no Event Grid permission.
+
+### Azure SQL Database
+
+1. Configure a Microsoft Entra administrator on the logical server. Microsoft Entra-only authentication is recommended; the pipelines no longer need SQL authentication.
+2. Allow network access from Data Factory. Use a managed virtual network with private endpoints, or enable **Allow Azure services and resources to access this server**.
+3. Connected to the database as the Entra administrator, create a contained user for the factory's managed identity. The user name is the factory name. Grant only the table-level permissions the pipelines use:
+
+```sql
+CREATE USER [<data-factory-name>] FROM EXTERNAL PROVIDER;
+
+-- Copy activity (bulk insert) sink: INSERT, plus SELECT so the copy
+-- activity can read the destination table's column metadata.
+GRANT SELECT, INSERT ON OBJECT::covid_reporting.cases_and_deaths         TO [<data-factory-name>];
+GRANT SELECT, INSERT ON OBJECT::covid_reporting.hospital_admissions_daily TO [<data-factory-name>];
+GRANT SELECT, INSERT ON OBJECT::covid_reporting.testing                  TO [<data-factory-name>];
+
+-- The pre-copy script runs TRUNCATE TABLE, which requires ALTER on the table.
+GRANT ALTER ON OBJECT::covid_reporting.hospital_admissions_daily TO [<data-factory-name>];
+GRANT ALTER ON OBJECT::covid_reporting.testing                   TO [<data-factory-name>];
+```
+
+Do **not** add the identity to `db_owner`, `db_ddladmin`, or even `db_datawriter`. Grant permissions on these three tables only.
+
+#### The `TRUNCATE TABLE` tradeoff
+
+`TRUNCATE TABLE` requires `ALTER` on the table. That permission also allows the identity to change the table's schema, such as adding or dropping columns, which is more than a loader needs. The grants above preserve the current pipeline behavior and limit `ALTER` to the two truncated tables. A tighter design, recommended as a follow-up, wraps the truncate in an owner-signed stored procedure:
+
+```sql
+CREATE PROCEDURE covid_reporting.usp_reset_hospital_admissions_daily
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+    SET NOCOUNT ON;
+    TRUNCATE TABLE covid_reporting.hospital_admissions_daily;
+END;
+GO
+GRANT EXECUTE ON OBJECT::covid_reporting.usp_reset_hospital_admissions_daily TO [<data-factory-name>];
+REVOKE ALTER ON OBJECT::covid_reporting.hospital_admissions_daily FROM [<data-factory-name>];
+```
+
+After that, set the copy activity's `preCopyScript` to `EXEC covid_reporting.usp_reset_hospital_admissions_daily;`, and repeat the pattern for `testing`. Another option is to load into a staging table and swap it into place inside a stored procedure. Either way, the identity can only empty the table and cannot alter its structure. These pipeline changes are not applied in this repository, which keeps the current behavior.
+
+`pl_sqlize_cases_and_deaths` appends rows without a pre-copy truncate. Its activity description mentions `TRUNCATE TABLE`, but no truncate is configured. Rerunning it therefore creates duplicate rows. Handle this with the same stored-procedure pattern if needed. Don't grant broader permissions to work around it.
 
 ## Triggers
 
@@ -140,7 +280,7 @@ Review trigger start times, storage scopes, and enabled states before activating
 
 ## Running and monitoring
 
-1. Confirm that linked-service connections succeed in ADF Studio.
+1. Complete the access configuration above, then confirm that linked-service connections succeed in ADF Studio.
 2. Add the required configuration and lookup files to storage.
 3. Run ingestion pipelines and verify files in the ADLS raw zone.
 4. Run transformation pipelines and inspect the processed outputs.
@@ -149,12 +289,32 @@ Review trigger start times, storage scopes, and enabled states before activating
 
 Pipeline and path names are preserved from the original ADF project, including `pl_ingest_popuation_data` and `hospitak_admissions_daily`. Rename them only after updating every dependent dataset, pipeline, trigger, and deployment artifact.
 
-## Security notes
+## Security
 
-- Keep secrets out of Git and deployment parameter files.
-- Use managed identities and Azure Key Vault where possible.
-- Restrict storage and database access to the minimum permissions required by ADF.
-- Treat the checked-in resource identifiers as examples from the original environment and replace them before deployment.
+### Scanning for secrets locally
+
+The repository ships a [Gitleaks](https://github.com/gitleaks/gitleaks) configuration (`.gitleaks.toml`). It extends the default ruleset with Azure and ADF-specific rules, including `encryptedCredential`, storage account keys, SAS signatures, connection-string passwords and user IDs, literal `SecureString` values, subscription IDs, and generated principal and tenant IDs.
+
+```bash
+# Install: https://github.com/gitleaks/gitleaks#installing (e.g. `brew install gitleaks`)
+gitleaks dir . --config .gitleaks.toml --redact     # current working tree
+gitleaks git . --config .gitleaks.toml --redact     # entire Git history
+```
+
+Always use `--redact` so findings never print secret values. The `security-scan` GitHub Actions workflow runs both scans and validates all JSON files on every push and pull request.
+
+### Public repository security checklist
+
+- [ ] No `encryptedCredential`, `connectionString`, `accountKey`, `sasUri`, `sasToken`, or password properties in any linked service
+- [ ] Blob, ADLS Gen2, and Azure SQL linked services use the Data Factory managed identity
+- [ ] `factory/*.json` declares `SystemAssigned` identity without `principalId` or `tenantId`
+- [ ] Endpoints, server and database names, and the trigger scope are placeholders in Git and parameters at deployment time
+- [ ] No populated parameter file is tracked (`git ls-files '*.local.json'` returns nothing)
+- [ ] `gitleaks dir` **and** `gitleaks git` report no leaks
+- [ ] Any credential that was ever committed, even encrypted, has been rotated or its resource deleted
+- [ ] Git history has been cleaned if it contains environment identifiers or credentials
+- [ ] Storage and SQL access follow the least-privilege tables above; no `db_owner`
+- [ ] GitHub secret scanning and push protection are enabled in the repository settings
 
 ## License
 
