@@ -1,0 +1,129 @@
+{
+	"Microsoft.DataFactory/factories": {
+		"properties": {
+			"globalParameters": {
+				"*": {
+					"value": "="
+				}
+			}
+		},
+		"location": "="
+	},
+	"Microsoft.DataFactory/factories/globalparameters": {
+		"properties": {
+			"*": {
+				"value": "="
+			}
+		}
+	},
+	"Microsoft.DataFactory/factories/pipelines": {},
+	"Microsoft.DataFactory/factories/dataflows": {},
+	"Microsoft.DataFactory/factories/triggers": {
+		"properties": {
+			"pipelines": [
+				{
+					"parameters": {
+						"*": "="
+					}
+				}
+			],
+			"pipeline": {
+				"parameters": {
+					"*": "="
+				}
+			},
+			"typeProperties": {
+				"scope": "-:-scope:string"
+			}
+		}
+	},
+	"Microsoft.DataFactory/factories/linkedServices": {
+		"*": {
+			"properties": {
+				"typeProperties": {
+					"accountName": "=",
+					"username": "=",
+					"userName": "=",
+					"accessKeyId": "=",
+					"servicePrincipalId": "=",
+					"userId": "=",
+					"host": "=",
+					"clientId": "=",
+					"clusterUserName": "=",
+					"clusterSshUserName": "=",
+					"hostSubscriptionId": "=",
+					"clusterResourceGroup": "=",
+					"subscriptionId": "=",
+					"resourceGroupName": "=",
+					"tenant": "=",
+					"dataLakeStoreUri": "=",
+					"baseUrl": "=",
+					"database": "-",
+					"serviceEndpoint": "-",
+					"batchUri": "=",
+					"poolName": "=",
+					"databaseName": "=",
+					"systemNumber": "=",
+					"server": "-",
+					"url": "-",
+					"functionAppUrl": "=",
+					"environmentUrl": "=",
+					"aadResourceId": "=",
+					"sasUri": "|:-sasUri:secureString",
+					"sasToken": "|",
+					"connectionString": "|:-connectionString:secureString",
+					"hostKeyFingerprint": "="
+				}
+			}
+		},
+		"AzureBlobStorage": {
+			"properties": {
+				"typeProperties": {
+					"serviceEndpoint": "-:-serviceEndpoint:string"
+				}
+			}
+		},
+		"AzureBlobFS": {
+			"properties": {
+				"typeProperties": {
+					"url": "-:-url:string"
+				}
+			}
+		},
+		"AzureSqlDatabase": {
+			"properties": {
+				"typeProperties": {
+					"server": "-:-server:string",
+					"database": "-:-database:string"
+				}
+			}
+		},
+		"AzureKeyVault": {
+			"properties": {
+				"typeProperties": {
+					"baseUrl": "-:-baseUrl:string"
+				}
+			}
+		},
+		"HttpServer": {
+			"properties": {
+				"typeProperties": {}
+			}
+		}
+	},
+	"Microsoft.DataFactory/factories/datasets": {
+		"*": {
+			"properties": {
+				"typeProperties": {
+					"folderPath": "=",
+					"fileName": "="
+				}
+			}
+		}
+	},
+	"Microsoft.DataFactory/factories/managedVirtualNetworks/managedPrivateEndpoints": {
+		"properties": {
+			"*": "="
+		}
+	}
+}

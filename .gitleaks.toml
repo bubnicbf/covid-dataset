@@ -1,0 +1,72 @@
+# Gitleaks configuration for a public Azure Data Factory repository.
+# Extends the built-in Gitleaks ruleset with Azure/ADF-specific checks.
+# Run locally:  gitleaks dir . --config .gitleaks.toml --redact
+#               gitleaks git . --config .gitleaks.toml --redact
+
+title = "covid-dataset ADF secret scanning"
+
+[extend]
+useDefault = true
+
+# --- Credentials -----------------------------------------------------------
+
+[[rules]]
+id = "adf-encrypted-credential"
+description = "ADF encryptedCredential blob (factory-bound credential; must not be committed)"
+regex = '''"encryptedCredential"\s*:\s*"[^"]+"'''
+keywords = ["encryptedcredential"]
+
+[[rules]]
+id = "azure-storage-account-key"
+description = "Azure Storage account key in a connection string"
+regex = '''(?i)AccountKey\s*=\s*[A-Za-z0-9+/]{20,}={0,2}'''
+keywords = ["accountkey"]
+
+[[rules]]
+id = "azure-sas-signature"
+description = "Azure shared access signature (sig= parameter)"
+regex = '''(?i)[?&;]sig=[A-Za-z0-9%+/=]{16,}'''
+keywords = ["sig="]
+
+[[rules]]
+id = "connection-string-password"
+description = "Password embedded in a connection string"
+regex = '''(?i)(?:password|pwd)\s*=\s*[^;"'\s<]{3,}'''
+keywords = ["password", "pwd"]
+
+[[rules]]
+id = "adf-literal-securestring"
+description = "ADF SecureString with a literal (non-parameter, non-placeholder) value"
+regex = '''"type"\s*:\s*"SecureString"\s*,\s*"value"\s*:\s*"[^"\[<]'''
+keywords = ["securestring"]
+
+# --- Environment identifiers that should not appear in a public repo ------
+
+[[rules]]
+id = "azure-subscription-id-in-resource-path"
+description = "Real Azure subscription ID in a resource ID"
+regex = '''(?i)/subscriptions/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'''
+secretGroup = 1
+keywords = ["/subscriptions/"]
+    [[rules.allowlists]]
+    regexes = ['''^0{8}-0{4}-0{4}-0{4}-0{12}$''']
+
+[[rules]]
+id = "azure-identity-guid"
+description = "Generated principal/tenant/client/object ID"
+regex = '''(?i)"(?:principalId|tenantId|clientId|objectId)"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"'''
+secretGroup = 1
+keywords = ["principalid", "tenantid", "clientid", "objectid"]
+    [[rules.allowlists]]
+    regexes = ['''^0{8}-0{4}-0{4}-0{4}-0{12}$''']
+
+[[rules]]
+id = "sql-connection-user-id"
+description = "SQL user name embedded in a connection string"
+regex = '''(?i)(?:user id|uid)\s*=\s*[^;"'\s<]+'''
+keywords = ["user id", "uid"]
+
+# The config file contains the patterns themselves.
+[[allowlists]]
+description = "Scanner configuration"
+paths = ['''^\.gitleaks\.toml$''']

@@ -1,0 +1,30 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"value": "<data-factory-name>"
+		},
+		"ls_ablob_covidreporting_sa_serviceEndpoint": {
+			"value": "https://<blob-storage-account>.blob.core.windows.net/"
+		},
+		"ls_adls_covidreporting_dl_url": {
+			"value": "https://<adls-storage-account>.dfs.core.windows.net/"
+		},
+		"ls_sql_covid_db_server": {
+			"value": "<sql-server-name>.database.windows.net"
+		},
+		"ls_sql_covid_db_database": {
+			"value": "<sql-database-name>"
+		},
+		"tr_ingest_population_data_scope": {
+			"value": "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Storage/storageAccounts/<blob-storage-account>"
+		},
+		"containerUri": {
+			"value": ""
+		},
+		"containerSasToken": {
+			"value": ""
+		}
+	}
+}

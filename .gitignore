@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Secrets and populated deployment parameters -- never commit these
+# ---------------------------------------------------------------------------
+# Copy deploy/ARMTemplateParametersForFactory.example.json to a *.local.json
+# file and fill in real values there.
+*.local.json
+*.local.jsonc
+*.secret.json
+*.secrets.json
+deploy/*.parameters.json
+!deploy/*.example.json
+.env
+.env.*
+!.env.example
+secrets/
+*.publishsettings
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+local.settings.json
+
+# Secret-scanner reports (may contain findings)
+gitleaks-report*.json
+gitleaks-report*.sarif
+
+# ADF / Node build tooling
+node_modules/
+build/node_modules/
+ArmTemplateOutput/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.bak
